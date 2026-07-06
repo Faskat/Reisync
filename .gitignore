@@ -1,0 +1,16 @@
+# секреты и токены
+spotify_config.json
+.spotify_token_cache
+
+# артефакты работы
+history.log
+*.wav
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.idea/
+.claude/

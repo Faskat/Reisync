@@ -1,0 +1,5 @@
+spotipy
+requests
+numpy
+PyAudioWPatch
+pyfiglet
