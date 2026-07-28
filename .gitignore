@@ -5,6 +5,7 @@ spotify_config.json
 # артефакты работы
 history.log
 *.wav
+output/
 
 # python
 __pycache__/
