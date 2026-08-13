@@ -1,12 +1,9 @@
 """
 Общая логика Reisync: клиент Spotify, чтение позиции плеера, загрузка и
 парсинг субтитров с lrclib.net, окно субтитров (DisplayConsole) и звуковая
-петля для эквалайзера. Используется и живым режимом (main.py), и пакетной
-записью (record_session.py), поэтому вынесено сюда, а не продублировано.
+петля для эквалайзера.
 """
 import bisect
-import ctypes
-from ctypes import wintypes
 import json
 import os
 import re
@@ -31,7 +28,8 @@ LYRIC_LEAD = 0.25       # строки показываем чуть раньш�
 #   eva02 — красный, арт янтарный (Ева-02, Аска)
 #   eva08 — розово-фиолетовый (Ева-08, Мари)
 #   mass  — белый (серийные Евы, Dummy Plug)
-THEME = 'nerv'
+#   skel  — чёрно-жёлтый (wifiskeleton)
+THEME = 'skel'
 # Поменять местами цвета интерфейса и акцент арта выбранной темы: шапка,
 # название и прогресс красятся цветом арта, а арт и текст песни — цветом
 # интерфейса (True/False), поменяй и перезапусти:
@@ -260,30 +258,13 @@ class DisplayConsole:
     обычного print() в основной консоли с логами. Общается с дочерним
     процессом через stdin, поэтому запись защищена локом на случай, если два
     потока попробуют писать одновременно.
-
-    monitor_rect — необязательный (left, top, right, bottom) виртуального
-    экрана: если задан, окно разворачивается без рамки на весь этот монитор
-    (используется пакетной записью, main.py его не передаёт).
     """
-    def __init__(self, monitor_rect=None):
+    def __init__(self):
         self._lock = threading.Lock()
         self._proc = None
         args = [sys.executable, LYRICS_CONSOLE_SCRIPT, '--theme', THEME]
         if SWAP_ACCENT:
             args.append('--swap-accent')
-        if monitor_rect:
-            l, t, r, b = monitor_rect
-            args += ['--monitor-rect', f'{l},{t},{r},{b}']
-            # conhost.exe спереди обязателен именно для полноэкранного режима:
-            # если у пользователя терминалом по умолчанию стоит Windows
-            # Terminal, CREATE_NEW_CONSOLE без conhost.exe открывает окно
-            # через него, и GetConsoleWindow() внутри дочернего процесса
-            # возвращает скрытое прокси-окно, а не реальное видимое —
-            # позиционирование на монитор тогда молча не действует. В обычном
-            # (не полноэкранном) режиме эта надстройка не нужна и не
-            # добавляется — она не бесплатна: у части систем запуск через
-            # неё приводил к падению python.exe с 0xC0000142 при старте.
-            args = ['conhost.exe'] + args
         try:
             self._proc = subprocess.Popen(
                 args,
@@ -323,7 +304,7 @@ class DisplayConsole:
         self._send("EXIT")
 
 
-def level_monitor(display, sink=None):
+def level_monitor(display):
     """
     Фоновый поток: постоянно слушает loopback-устройство, раскладывает звук
     по частотным полосам через FFT и шлёт их в окно субтитров. Работает всегда,
@@ -333,11 +314,6 @@ def level_monitor(display, sink=None):
     Нормировка адаптивная (бегущий максимум по каждой полосе): абсолютный
     масштаб FFT зависит от громкости системы и материала, и фиксированный
     порог давал бы то пустой, то вечно зашкаливающий эквалайзер.
-
-    sink — необязательный объект с .write(raw_bytes): используется пакетной
-    записью, чтобы тот же самый открытый loopback-стрим одновременно кормил
-    и эквалайзер, и звуковую дорожку ffmpeg (не открываем звуковое устройство
-    второй раз ради записи).
     """
     smoothed = np.zeros(EQ_BANDS)
     band_peaks = np.full(EQ_BANDS, 1e-6)
@@ -349,8 +325,6 @@ def level_monitor(display, sink=None):
                 device = get_loopback_device(p)
                 channels = device["maxInputChannels"]
                 samplerate = int(device["defaultSampleRate"])
-                if sink is not None:
-                    sink.set_format(samplerate, channels)
                 window = np.hanning(EQ_CHUNK)
                 freqs = np.fft.rfftfreq(EQ_CHUNK, 1 / samplerate)
                 edges = np.logspace(np.log10(50), np.log10(min(16000, samplerate / 2)),
@@ -367,8 +341,6 @@ def level_monitor(display, sink=None):
                 try:
                     while True:
                         data = stream.read(EQ_CHUNK, exception_on_overflow=False)
-                        if sink is not None:
-                            sink.write(data)
                         samples = np.frombuffer(data, dtype=np.int16)
                         if channels > 1:
                             samples = samples.reshape(-1, channels).mean(axis=1)
@@ -398,84 +370,3 @@ def log_history(artist, title):
     with open(HISTORY_FILE, 'a', encoding='utf-8') as f:
         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{artist} - {title}\n")
 
-
-# ---------------------------------------------------------------- мониторы
-
-class _RECT(ctypes.Structure):
-    _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long),
-                ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
-
-
-class _MONITORINFO(ctypes.Structure):
-    _fields_ = [('cbSize', wintypes.DWORD), ('rcMonitor', _RECT),
-                ('rcWork', _RECT), ('dwFlags', wintypes.DWORD)]
-
-
-_MONITORINFOF_PRIMARY = 0x1
-_user32 = ctypes.windll.user32
-
-# тот же класс бага, что и в lyrics_console.py: без явных argtypes/restype
-# ctypes подставляет размеры параметров "на глаз", и LPARAM здесь ошибочно
-# стоял как c_double (не как указательного размера целое) — на одних сборках
-# Python это проходило незаметно, на других вызывало настоящий access
-# violation в нативном колбэке EnumDisplayMonitors
-_user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(_MONITORINFO)]
-_user32.GetMonitorInfoW.restype = wintypes.BOOL
-_user32.EnumDisplayMonitors.argtypes = [wintypes.HDC, ctypes.POINTER(_RECT),
-                                        ctypes.c_void_p, wintypes.LPARAM]
-_user32.EnumDisplayMonitors.restype = wintypes.BOOL
-_MonitorEnumProc = ctypes.WINFUNCTYPE(
-    wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC,
-    ctypes.POINTER(_RECT), wintypes.LPARAM
-)
-
-
-def list_monitors():
-    """Список мониторов: [{'rect': (l, t, r, b), 'is_primary': bool}, ...],
-    координаты — виртуального экрана (могут быть отрицательными)."""
-    monitors = []
-
-    def callback(hmonitor, hdc, rect_ptr, data):
-        info = _MONITORINFO()
-        info.cbSize = ctypes.sizeof(_MONITORINFO)
-        _user32.GetMonitorInfoW(hmonitor, ctypes.byref(info))
-        rect = (info.rcMonitor.left, info.rcMonitor.top,
-                info.rcMonitor.right, info.rcMonitor.bottom)
-        monitors.append({
-            'rect': rect,
-            'is_primary': bool(info.dwFlags & _MONITORINFOF_PRIMARY),
-        })
-        return 1
-
-    _user32.EnumDisplayMonitors(None, None, _MonitorEnumProc(callback), 0)
-    return monitors
-
-
-def pick_monitor(index=None):
-    """
-    Возвращает (index, rect) монитора для полноэкранного окна субтитров и
-    записи. Без явного index берёт первый не-основной монитор с разрешением
-    1920x1080 (условие пользователя: "второй монитор Full HD").
-    """
-    monitors = list_monitors()
-    if not monitors:
-        raise RuntimeError("Не удалось получить список мониторов")
-
-    if index is not None:
-        if index < 0 or index >= len(monitors):
-            raise RuntimeError(
-                f"Монитор #{index} не найден, всего мониторов: {len(monitors)}"
-            )
-        return index, monitors[index]['rect']
-
-    for i, m in enumerate(monitors):
-        if m['is_primary']:
-            continue
-        l, t, r, b = m['rect']
-        if (r - l, b - t) == (1920, 1080):
-            return i, m['rect']
-
-    raise RuntimeError(
-        "Не нашёл второй монитор 1920x1080 автоматически. "
-        f"Обнаруженные мониторы: {monitors}. Укажите номер явно флагом --monitor N."
-    )
