@@ -9,11 +9,8 @@
   EXIT                            — завершение процесса
 
 Тема оформления передаётся аргументом командной строки:
-  --theme nerv|eva01|eva02|eva08|mass
+  --theme nerv|eva01|eva02|eva08|mass|skel
   --swap-accent — поменять местами цвета интерфейса и арта (две семьи темы)
-  --monitor-rect L,T,R,B — развернуть окно без рамки на весь указанный монитор
-                           (виртуальные координаты экрана; задаёт
-                           record_session.py, в обычном режиме main.py не используется)
 
 Компоновка кадра:
   ┌ шапка
@@ -57,11 +54,6 @@ ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
 HWND_TOPMOST = -1
 SWP_NOMOVE = 0x0002
 SWP_NOSIZE = 0x0001
-SWP_FRAMECHANGED = 0x0020
-SWP_SHOWWINDOW = 0x0040
-GWL_STYLE = -16
-WS_POPUP = 0x80000000
-WS_VISIBLE = 0x10000000
 
 # Без явных argtypes/restype ctypes по умолчанию трактует параметры как
 # 32-битный c_int — на 64-битной Windows HWND занимает 64 бита, и такая
@@ -75,20 +67,6 @@ _kernel32.GetConsoleWindow.restype = wintypes.HWND
 _user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                  ctypes.c_int, ctypes.c_int, ctypes.c_uint]
 _user32.SetWindowPos.restype = wintypes.BOOL
-_user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
-_user32.SetWindowLongW.restype = ctypes.c_long
-
-
-class _WINDOWPLACEMENT(ctypes.Structure):
-    _fields_ = [('length', ctypes.c_uint), ('flags', ctypes.c_uint),
-                ('showCmd', ctypes.c_uint), ('ptMinPosition', wintypes.POINT),
-                ('ptMaxPosition', wintypes.POINT), ('rcNormalPosition', wintypes.RECT)]
-
-
-_user32.SetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(_WINDOWPLACEMENT)]
-_user32.SetWindowPlacement.restype = wintypes.BOOL
-
-SW_SHOWNORMAL = 1
 
 HOME = '\x1b[H'
 CLEAR_BELOW = '\x1b[J'
@@ -118,6 +96,9 @@ THEMES = {
     # Серийные Евы: белая броня, Dummy Plug
     'mass':  {'bg': 252, 'ui': 252, 'ui_dim': 244, 'ui_accent': 255,
               'art': 250, 'art_dim': 240, 'art_bright': 231, 'lyric': 255},
+    # wifiskeleton: чёрно-жёлтая — жёлтый интерфейс и арт на чёрном фоне терминала
+    'skel':  {'bg': 226, 'ui': 220, 'ui_dim': 136, 'ui_accent': 228,
+              'art': 226, 'art_dim': 142, 'art_bright': 228, 'lyric': 229},
 }
 
 
@@ -129,23 +110,7 @@ def _pick_theme():
     return 'nerv'
 
 
-def _pick_monitor_rect():
-    """--monitor-rect L,T,R,B — координаты монитора для полноэкранного
-    показа без рамки (передаёт record_session.py; в обычном запуске из
-    main.py отсутствует, и окно ведёт себя как раньше)."""
-    if '--monitor-rect' in sys.argv:
-        i = sys.argv.index('--monitor-rect')
-        if i + 1 < len(sys.argv):
-            try:
-                l, t, r, b = (int(x) for x in sys.argv[i + 1].split(','))
-                return (l, t, r, b)
-            except ValueError:
-                pass
-    return None
-
-
 THEME_NAME = _pick_theme()
-MONITOR_RECT = _pick_monitor_rect()
 # --swap-accent меняет местами две цветовые семьи темы: ui (шапка, название,
 # прогресс, статус) и art (арт персонажа, текст песни, спектр). Просто менять
 # ui и ui_accent бессмысленно — это близкие оттенки одного цвета, и разницы
@@ -329,6 +294,7 @@ THEME_CHARACTER = {
     'eva02': (theme_arts.ASUKA, False, 'SORYU ASUKA LANGLEY · EVA UNIT-02', 'UNIT-02'),
     'eva08': (theme_arts.MARI, False, 'MAKINAMI MARI · EVA UNIT-08', 'UNIT-08'),
     'mass':  (theme_arts.MASS, False, 'MASS PRODUCTION MODEL · DUMMY PLUG', 'MP-EVA'),
+    'skel':  (theme_arts.SKELETON, False, 'WIFISKELETON', 'SKEL-01'),
 }
 
 # все персонажи красятся арт-акцентом своей темы (в nerv это и есть
@@ -362,154 +328,14 @@ def enable_console():
     kernel32.SetConsoleMode(handle, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
 
 
-def _to_signed32(value):
-    """WinAPI-стилевые флаги (WS_POPUP и т.п.) выше 0x7FFFFFFF ctypes не
-    примет как обычный python int для LONG-параметра — нужно явно свернуть
-    в знаковое 32-битное представление (двоичное дополнение)."""
-    value &= 0xFFFFFFFF
-    return value - 0x100000000 if value & 0x80000000 else value
-
-
-class _COORD(ctypes.Structure):
-    _fields_ = [('X', ctypes.c_short), ('Y', ctypes.c_short)]
-
-
-class _SMALL_RECT(ctypes.Structure):
-    _fields_ = [('Left', ctypes.c_short), ('Top', ctypes.c_short),
-                ('Right', ctypes.c_short), ('Bottom', ctypes.c_short)]
-
-
-class _CONSOLE_FONT_INFOEX(ctypes.Structure):
-    _fields_ = [('cbSize', ctypes.c_ulong), ('nFont', ctypes.c_ulong),
-                ('dwFontSize', _COORD), ('FontFamily', ctypes.c_uint),
-                ('FontWeight', ctypes.c_uint), ('FaceName', ctypes.c_wchar * 32)]
-
-
-_FF_MODERN_TRUETYPE = 0x36
-_FULLSCREEN_FONT_HEIGHT_PX = 18
-
-# те же соображения о явных argtypes/restype, что и у SetWindowPos выше —
-# все эти функции принимают/возвращают HANDLE (64-битный указатель)
-_kernel32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
-                                  wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
-_kernel32.CreateFileW.restype = wintypes.HANDLE
-_kernel32.SetCurrentConsoleFontEx.argtypes = [wintypes.HANDLE, wintypes.BOOL,
-                                              ctypes.POINTER(_CONSOLE_FONT_INFOEX)]
-_kernel32.SetCurrentConsoleFontEx.restype = wintypes.BOOL
-_kernel32.GetCurrentConsoleFontEx.argtypes = [wintypes.HANDLE, wintypes.BOOL,
-                                              ctypes.POINTER(_CONSOLE_FONT_INFOEX)]
-_kernel32.GetCurrentConsoleFontEx.restype = wintypes.BOOL
-_kernel32.SetConsoleWindowInfo.argtypes = [wintypes.HANDLE, wintypes.BOOL,
-                                           ctypes.POINTER(_SMALL_RECT)]
-_kernel32.SetConsoleWindowInfo.restype = wintypes.BOOL
-_kernel32.SetConsoleScreenBufferSize.argtypes = [wintypes.HANDLE, _COORD]
-_kernel32.SetConsoleScreenBufferSize.restype = wintypes.BOOL
-
-
-def _console_out_handle():
-    GENERIC_READ_WRITE = 0x80000000 | 0x40000000
-    FILE_SHARE_READ_WRITE = 1 | 2
-    OPEN_EXISTING = 3
-    handle = _kernel32.CreateFileW(
-        'CONOUT$', GENERIC_READ_WRITE, FILE_SHARE_READ_WRITE, None,
-        OPEN_EXISTING, 0, None
-    )
-    invalid = ctypes.cast(-1, wintypes.HANDLE).value
-    return None if not handle or handle == invalid else handle
-
-
-def _fit_buffer_to_pixels(handle, width_px, height_px):
-    """
-    Окно консоли нельзя растянуть больше, чем позволяет текущий буфер (строки
-    x столбцы) при текущем шрифте — просто передвинуть/увеличить окно
-    недостаточно, Windows тихо подожмёт его обратно под старый буфер. Поэтому
-    сначала подбираем шрифт нужной высоты и считаем, сколько строк/столбцов
-    нужно буферу, чтобы в пикселях получить примерно width x height, и только
-    потом можно двигать/растягивать само окно.
-    """
-    kernel32 = ctypes.windll.kernel32
-
-    font = _CONSOLE_FONT_INFOEX()
-    font.cbSize = ctypes.sizeof(_CONSOLE_FONT_INFOEX)
-    font.dwFontSize = _COORD(0, _FULLSCREEN_FONT_HEIGHT_PX)
-    font.FontFamily = _FF_MODERN_TRUETYPE
-    font.FontWeight = 400
-    font.FaceName = 'Consolas'
-    kernel32.SetCurrentConsoleFontEx(handle, False, ctypes.byref(font))
-
-    applied = _CONSOLE_FONT_INFOEX()
-    applied.cbSize = ctypes.sizeof(_CONSOLE_FONT_INFOEX)
-    kernel32.GetCurrentConsoleFontEx(handle, False, ctypes.byref(applied))
-    cell_w = max(applied.dwFontSize.X, 1)
-    cell_h = max(applied.dwFontSize.Y, 1)
-
-    cols = max(width_px // cell_w, 10)
-    rows = max(height_px // cell_h, 10)
-
-    # сначала схлопываем окно — иначе запрос буфера меньше текущего окна
-    # (частый случай при уменьшении) завершится ERROR_INVALID_PARAMETER
-    kernel32.SetConsoleWindowInfo(handle, True, ctypes.byref(_SMALL_RECT(0, 0, 0, 0)))
-    kernel32.SetConsoleScreenBufferSize(handle, _COORD(cols, rows))
-    kernel32.SetConsoleWindowInfo(handle, True,
-                                  ctypes.byref(_SMALL_RECT(0, 0, cols - 1, rows - 1)))
-    return cols, rows, cell_w, cell_h
-
-
-def _place(hwnd, rect):
-    placement = _WINDOWPLACEMENT()
-    placement.length = ctypes.sizeof(_WINDOWPLACEMENT)
-    placement.showCmd = SW_SHOWNORMAL
-    placement.rcNormalPosition = wintypes.RECT(*rect)
-    _user32.SetWindowPlacement(hwnd, ctypes.byref(placement))
-
-
-def make_borderless_fullscreen(hwnd, rect):
-    """
-    Две неочевидные ловушки консольного окна, найденные опытным путём:
-
-    1. SetWindowPos тут не годится — у консольного окна свой
-       WM_WINDOWPOSCHANGING, который переигрывает X/Y по-своему (возврат
-       SetWindowPos был "успех", но итоговое окно оказывалось не там, где
-       просили). SetWindowPlacement идёт другим путём и этой перезаписи не
-       подвержен.
-    2. Если сразу поставить SetWindowPlacement на большой (во весь монитор)
-       прямоугольник, ПОЗИЦИЯ тоже сбивается — но если сначала поставить
-       маленький прямоугольник ровно на целевом мониторе, а потом ВТОРЫМ
-       вызовом растянуть до полного размера, позиция держится верно. Похоже,
-       Windows валидирует позицию актуальным (на момент вызова) монитором
-       окна, а его исходно нет на целевом мониторе.
-
-    Известное ограничение: SetWindowPlacement кладёт "нормальное" (не
-    развёрнутое) окно в границы рабочей области монитора, то есть за вычетом
-    панели задач, если она показана на этом мониторе — тогда внизу останется
-    небольшая (высота панели задач) чёрная полоса. Прячьте панель задач на
-    втором мониторе, если нужна честная заливка на весь физический экран.
-    """
-    left, top, right, bottom = rect
-    width_px, height_px = right - left, bottom - top
-
-    style = _to_signed32(WS_POPUP | WS_VISIBLE)
-    _user32.SetWindowLongW(hwnd, GWL_STYLE, style)
-
-    handle = _console_out_handle()
-    if handle is not None:
-        _fit_buffer_to_pixels(handle, width_px, height_px)
-
-    _place(hwnd, (left, top, left + 200, top + 200))
-    _place(hwnd, rect)
-
-
-def pin_on_top(monitor_rect=None):
+def pin_on_top():
     kernel32 = ctypes.windll.kernel32
     user32 = ctypes.windll.user32
     kernel32.SetConsoleTitleW("NERV — MAGI LYRIC SYNC")
     hwnd = kernel32.GetConsoleWindow()
     if not hwnd:
         return
-    if monitor_rect:
-        make_borderless_fullscreen(hwnd, monitor_rect)
-    else:
-        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+    user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
 
 
 def term_size():
@@ -875,7 +701,7 @@ def compose_frame(snap, caches, disp_bands, now):
 
 def main():
     enable_console()
-    pin_on_top(MONITOR_RECT)
+    pin_on_top()
     sys.stdout.write(HIDE_CURSOR)
 
     # загрузка шрифтов ниже занимает ~1.5 сек — показываем заставку сразу,
