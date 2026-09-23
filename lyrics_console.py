@@ -9,7 +9,7 @@
   EXIT                            — завершение процесса
 
 Тема оформления передаётся аргументом командной строки:
-  --theme nerv|eva01|eva02|eva08|mass|skel
+  --theme nerv|eva01|eva02|eva08|mass|skel|geass
   --swap-accent — поменять местами цвета интерфейса и арта (две семьи темы)
 
 Компоновка кадра:
@@ -99,6 +99,10 @@ THEMES = {
     # wifiskeleton: чёрно-жёлтая — жёлтый интерфейс и арт на чёрном фоне терминала
     'skel':  {'bg': 226, 'ui': 220, 'ui_dim': 136, 'ui_accent': 228,
               'art': 226, 'art_dim': 142, 'art_bright': 228, 'lyric': 229},
+    # Code Geass: красный знак Гиаса в интерфейсе, арт фиолетовый — палитра
+    # как у стингера Geass в OBS (#e6183a / #ff2d6b и #8b3ff0 / #a877e6).
+    'geass': {'bg': 160, 'ui': 197, 'ui_dim': 88, 'ui_accent': 204,
+              'art': 99, 'art_dim': 55, 'art_bright': 141, 'lyric': 225},
 }
 
 
@@ -295,6 +299,7 @@ THEME_CHARACTER = {
     'eva08': (theme_arts.MARI, False, 'MAKINAMI MARI · EVA UNIT-08', 'UNIT-08'),
     'mass':  (theme_arts.MASS, False, 'MASS PRODUCTION MODEL · DUMMY PLUG', 'MP-EVA'),
     'skel':  (theme_arts.SKELETON, False, 'WIFISKELETON', 'SKEL-01'),
+    'geass': (theme_arts.CC, False, 'C.C. · CODE GEASS', 'GEASS'),
 }
 
 # все персонажи красятся арт-акцентом своей темы (в nerv это и есть
