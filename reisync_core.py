@@ -29,12 +29,12 @@ LYRIC_LEAD = 0.25       # строки показываем чуть раньш�
 #   eva08 — розово-фиолетовый (Ева-08, Мари)
 #   mass  — белый (серийные Евы, Dummy Plug)
 #   skel  — чёрно-жёлтый (wifiskeleton)
-#   geass — красный с фиолетовым (Code Geass, C.C.)
+#   geass — красный с зелёным (Code Geass, C.C.)
 THEME = 'geass'
 # Поменять местами цвета интерфейса и акцент арта выбранной темы: шапка,
 # название и прогресс красятся цветом арта, а арт и текст песни — цветом
 # интерфейса (True/False), поменяй и перезапусти:
-SWAP_ACCENT = False
+SWAP_ACCENT = True
 EQ_BANDS = 24
 EQ_CHUNK = 2048
 HISTORY_FILE = "history.log"
