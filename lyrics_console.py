@@ -99,10 +99,10 @@ THEMES = {
     # wifiskeleton: чёрно-жёлтая — жёлтый интерфейс и арт на чёрном фоне терминала
     'skel':  {'bg': 226, 'ui': 220, 'ui_dim': 136, 'ui_accent': 228,
               'art': 226, 'art_dim': 142, 'art_bright': 228, 'lyric': 229},
-    # Code Geass: красный знак Гиаса в интерфейсе, арт фиолетовый — палитра
-    # как у стингера Geass в OBS (#e6183a / #ff2d6b и #8b3ff0 / #a877e6).
+    # Code Geass: красный знак Гиаса в интерфейсе (#e6183a / #ff2d6b, как у
+    # стингера в OBS), арт зелёный — под цвет волос C.C.
     'geass': {'bg': 160, 'ui': 197, 'ui_dim': 88, 'ui_accent': 204,
-              'art': 99, 'art_dim': 55, 'art_bright': 141, 'lyric': 225},
+              'art': 77, 'art_dim': 28, 'art_bright': 120, 'lyric': 225},
 }
 
 
