@@ -102,7 +102,7 @@ THEMES = {
     # Code Geass: красный знак Гиаса в интерфейсе (#e6183a / #ff2d6b, как у
     # стингера в OBS), арт зелёный — под цвет волос C.C.
     'geass': {'bg': 160, 'ui': 197, 'ui_dim': 88, 'ui_accent': 204,
-              'art': 77, 'art_dim': 28, 'art_bright': 120, 'lyric': 203},
+              'art': 77, 'art_dim': 28, 'art_bright': 120, 'lyric': 196},
 }
 
 
