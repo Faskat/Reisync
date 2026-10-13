@@ -4,6 +4,7 @@
 петля для эквалайзера.
 """
 import bisect
+from collections import OrderedDict
 import json
 import os
 import re
@@ -41,6 +42,10 @@ HISTORY_FILE = "history.log"
 SPOTIFY_CONFIG_FILE = "spotify_config.json"
 SPOTIFY_TOKEN_CACHE = ".spotify_token_cache"
 SPOTIFY_SCOPE = "user-read-playback-state"
+LYRICS_CACHE_SIZE = 128
+LYRICS_CACHE_TTL = 3600
+_lyrics_cache = OrderedDict()
+_lyrics_cache_lock = threading.Lock()
 LYRICS_CONSOLE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lyrics_console.py')
 
 
@@ -127,6 +132,15 @@ def get_loopback_device(p):
 
 
 def fetch_lyrics(artist, title, duration_sec):
+    key = (artist, title, int(duration_sec))
+    with _lyrics_cache_lock:
+        cached = _lyrics_cache.get(key)
+        if cached is not None:
+            fetched_at, lyrics = cached
+            if time.monotonic() - fetched_at < LYRICS_CACHE_TTL:
+                _lyrics_cache.move_to_end(key)
+                return lyrics.copy()
+            del _lyrics_cache[key]
     headers = {
         'User-Agent': 'LyricSync/1.0 (https://github.com/yourname/lyricsync)'
     }
@@ -146,7 +160,14 @@ def fetch_lyrics(artist, title, duration_sec):
     if response.status_code != 200:
         return None
 
-    return response.json()
+    lyrics = response.json()
+    if isinstance(lyrics, dict) and (lyrics.get('syncedLyrics') or lyrics.get('plainLyrics')):
+        with _lyrics_cache_lock:
+            _lyrics_cache[key] = (time.monotonic(), lyrics.copy())
+            _lyrics_cache.move_to_end(key)
+            while len(_lyrics_cache) > LYRICS_CACHE_SIZE:
+                _lyrics_cache.popitem(last=False)
+    return lyrics
 
 
 def parse_lrc(lrc_text):
@@ -305,6 +326,29 @@ class DisplayConsole:
         self._send("EXIT")
 
 
+class SpectrumBands:
+    """Средние по полосам без 24 масок и копий спектра на каждом блоке.
+
+    Границы сохраняют прежние условия lower <= frequency < upper.
+    Экземпляр и его рабочий буфер принадлежат одному аудиопотоку.
+    """
+    def __init__(self, samplerate):
+        freqs = np.fft.rfftfreq(EQ_CHUNK, 1 / samplerate)
+        edges = np.logspace(np.log10(50), np.log10(min(16000, samplerate / 2)),
+                            EQ_BANDS + 1)
+        self._bounds = np.searchsorted(freqs, edges, side='left')
+        self._counts = np.diff(self._bounds)
+        self._nonempty = self._counts > 0
+        self._prefix = np.empty(len(freqs) + 1)
+        self._prefix[0] = 0.0
+
+    def means(self, spectrum):
+        np.cumsum(spectrum, out=self._prefix[1:])
+        sums = self._prefix[self._bounds[1:]] - self._prefix[self._bounds[:-1]]
+        return np.divide(sums, self._counts, out=np.zeros(EQ_BANDS),
+                         where=self._nonempty)
+
+
 def level_monitor(display):
     """
     Фоновый поток: постоянно слушает loopback-устройство, раскладывает звук
@@ -327,11 +371,7 @@ def level_monitor(display):
                 channels = device["maxInputChannels"]
                 samplerate = int(device["defaultSampleRate"])
                 window = np.hanning(EQ_CHUNK)
-                freqs = np.fft.rfftfreq(EQ_CHUNK, 1 / samplerate)
-                edges = np.logspace(np.log10(50), np.log10(min(16000, samplerate / 2)),
-                                    EQ_BANDS + 1)
-                band_masks = [(freqs >= edges[i]) & (freqs < edges[i + 1])
-                              for i in range(EQ_BANDS)]
+                band_analyzer = SpectrumBands(samplerate)
 
                 stream = p.open(format=pyaudio.paInt16,
                                 channels=channels,
@@ -352,8 +392,7 @@ def level_monitor(display):
                         level = min(rms / level_peak, 1.0)
 
                         spectrum = np.abs(np.fft.rfft(samples[:EQ_CHUNK] * window))
-                        raw = np.array([spectrum[m].mean() if m.any() else 0.0
-                                        for m in band_masks])
+                        raw = band_analyzer.means(spectrum)
                         band_peaks = np.maximum(band_peaks * 0.999, raw)
                         bands = np.minimum(raw / band_peaks, 1.0)
 
